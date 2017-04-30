@@ -16,6 +16,7 @@ import (
 	"log"
 	"net"
 	"net/http"
+	// "net/url"
 	"os"
 	"strings"
 	"time"
@@ -35,6 +36,14 @@ func getOutboundIP() string {
 	idx := strings.LastIndex(localAddr, ":")
 
 	return localAddr[0:idx]
+}
+
+func getHostname() string {
+	hostname, err := os.Hostname()
+	if err != nil {
+		return ""
+	}
+	return hostname
 }
 
 // Get preferred outbound ip of this machine
@@ -57,23 +66,10 @@ func hello(w http.ResponseWriter, r *http.Request) {
 
 func status(w http.ResponseWriter, r *http.Request) {
 	var dtcStatus string
-	hostname, err := os.Hostname()
-	if err != nil {
-		return
-	}
-
 	if !testDTCIP() {
 		dtcStatus = "lien coupé"
 	}
-	io.WriteString(w, "<div class='statushost'>"+hostname+"</div><div class='statusip'>"+getOutboundIP()+"</div><div class='statusdtc'>"+dtcStatus+"</div>")
-}
-
-func change(w http.ResponseWriter, r *http.Request) {
-	doDial("window.location=\"http://frmonbcastapp01.emea.brinksgbl.com:3030/change\"")
-}
-
-func incident(w http.ResponseWriter, r *http.Request) {
-	doDial("window.location=\"http://frmonbcastapp01.emea.brinksgbl.com:3030/incident\"")
+	io.WriteString(w, "<div class='statushost'>"+getHostname()+"</div><div class='statusip'>"+getOutboundIP()+"</div><div class='statusdtc'>"+dtcStatus+"</div>")
 }
 
 func socCheckpoint(w http.ResponseWriter, r *http.Request) {
@@ -88,17 +84,26 @@ func refresh(w http.ResponseWriter, r *http.Request) {
 	doDial("reload")
 }
 
+func dashboard(w http.ResponseWriter, r *http.Request) {
+	u := r.URL
+	// fmt.Println(u.Host)
+	// fmt.Println(u.Path)
+	// fmt.Println(u.String())
+	// fmt.Println(u.RawQuery)
+	doDial("window.location=\"http://frmonbcastapp01.emea.brinksgbl.com:3030/" + u.RawQuery + "\"")
+}
+
 func doDial(cmd string) {
 	// connect to this socket
-	conn, err := net.Dial("tcp", hostName+":"+portNum)
+	conn, err := net.Dial("tcp", remoteHostname+":"+remotePortnum)
 
 	if err != nil {
-		fmt.Printf("Some error %v", err)
+		fmt.Printf("%s: Some error %v", cmd, err)
 		return
 	}
 
 	defer conn.Close()
-	fmt.Printf("Connection established between %s and localhost.\n", hostName)
+	fmt.Printf("Connection established between %s and localhost.\n", remoteHostname)
 	fmt.Printf("Local Address : %s \n", conn.LocalAddr().String())
 	fmt.Printf("Remote Address : %s \n", conn.RemoteAddr().String())
 
@@ -111,19 +116,22 @@ func doDial(cmd string) {
 }
 
 var mux map[string]func(http.ResponseWriter, *http.Request)
-var hostName string
+var remoteHostname string
+var remotePortnum string
 var portNum string
 
 type configuration struct {
 	UUID        string
 	LogicalName string
+	HostName    string
+	IPAddress   string
 }
 
 func getConfig(filename string, config *configuration) *configuration {
 	file, err := os.Open(filename)
 	if err != nil {
-		fmt.Println("error:", err)
-		config = &configuration{UUID: uuid.NewV4().String(), LogicalName: "default"}
+		// fmt.Println("error:", err)
+		config = &configuration{UUID: uuid.NewV4().String(), LogicalName: "default", HostName: "", IPAddress: ""}
 		configSt, _ := json.Marshal(config)
 		ioutil.WriteFile(filename, configSt, 0644)
 		return config
@@ -135,6 +143,8 @@ func getConfig(filename string, config *configuration) *configuration {
 		fmt.Println("error:", err)
 		return nil
 	}
+	config.HostName = getHostname()
+	config.IPAddress = getOutboundIP()
 	return config
 }
 
@@ -144,25 +154,26 @@ func main() {
 	if cfg == nil {
 		return
 	}
-	fmt.Printf("UUIDv4: %s\n", cfg.UUID)
+	fmt.Printf("%s(%s):%s\n", cfg.HostName, cfg.IPAddress, cfg.UUID)
 
-	hostNamePtr := flag.String("host", "localhost", "Remote host")
-	portNumPtr := flag.Int("port", 32000, "Remote port")
+	portNumPtr := flag.Int("port", 8000, "Port")
+	remoteHostnamePtr := flag.String("remotehost", "localhost", "Remote host")
+	remotePortnumPtr := flag.Int("remoteport", 32000, "Remote port")
 
 	flag.Parse()
-	hostName = *hostNamePtr
-	portNum = fmt.Sprintf("%v", *portNumPtr)
+	remoteHostname = *remoteHostnamePtr
+	remotePortnum = fmt.Sprintf("%v", *remotePortnumPtr)
 
 	server := http.Server{
-		Addr:    ":8000",
+		Addr:    fmt.Sprintf(":%v", *portNumPtr),
 		Handler: &myHandler{},
 	}
 
 	mux = make(map[string]func(http.ResponseWriter, *http.Request))
 	mux["/"] = hello
+	//
+	mux["/dashboard"] = dashboard
 	mux["/status"] = status
-	mux["/change"] = change
-	mux["/incident"] = incident
 	mux["/home"] = home
 	mux["/refresh"] = refresh
 	mux["/checkpoint"] = socCheckpoint
@@ -173,7 +184,13 @@ func main() {
 type myHandler struct{}
 
 func (*myHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
-	if h, ok := mux[r.URL.String()]; ok {
+	// u := r.URL
+	// fmt.Println(u.Host)
+	// fmt.Println(u.Path)
+	// fmt.Println(u.String())
+	// fmt.Println(u.RawQuery)
+
+	if h, ok := mux[r.URL.Path]; ok {
 		h(w, r)
 		return
 	}
