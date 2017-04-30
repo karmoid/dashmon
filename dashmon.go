@@ -90,7 +90,7 @@ func dashboard(w http.ResponseWriter, r *http.Request) {
 	// fmt.Println(u.Path)
 	// fmt.Println(u.String())
 	// fmt.Println(u.RawQuery)
-	doDial("window.location=\"http://frmonbcastapp01.emea.brinksgbl.com:3030/" + u.RawQuery + "\"")
+	doDial(fmt.Sprintf("window.location=\"%s%s\"", cfg.DashboardSite, u.RawQuery))
 }
 
 func doDial(cmd string) {
@@ -115,48 +115,48 @@ func doDial(cmd string) {
 
 }
 
+type configuration struct {
+	UUID          string
+	LogicalName   string
+	HostName      string
+	IPAddress     string
+	DashboardSite string
+}
+
 var mux map[string]func(http.ResponseWriter, *http.Request)
 var remoteHostname string
 var remotePortnum string
 var portNum string
+var cfg configuration
 
-type configuration struct {
-	UUID        string
-	LogicalName string
-	HostName    string
-	IPAddress   string
-}
-
-func getConfig(filename string, config *configuration) *configuration {
+func getConfig(filename string, config *configuration) bool {
 	file, err := os.Open(filename)
 	if err != nil {
 		// fmt.Println("error:", err)
-		config = &configuration{
-			UUID:        uuid.NewV4().String(),
-			LogicalName: getHostname(),
-			HostName:    getHostname(),
-			IPAddress:   getOutboundIP(),
-		}
+		config.UUID = uuid.NewV4().String()
+		config.LogicalName = getHostname()
+		config.HostName = getHostname()
+		config.IPAddress = getOutboundIP()
+		config.DashboardSite = "http://localhost:3030/"
 		configSt, _ := json.Marshal(config)
+		fmt.Println("config:", configSt)
 		ioutil.WriteFile(filename, configSt, 0644)
-		return config
+		return true
 	}
 	decoder := json.NewDecoder(file)
 	config = &configuration{}
 	err = decoder.Decode(config)
 	if err != nil {
 		fmt.Println("error:", err)
-		return nil
+		return false
 	}
 	config.HostName = getHostname()
 	config.IPAddress = getOutboundIP()
-	return config
+	return true
 }
 
 func main() {
-	var config configuration
-	cfg := getConfig("properties.json", &config)
-	if cfg == nil {
+	if !getConfig("properties.json", &cfg) {
 		return
 	}
 	fmt.Printf("%s(%s):%s\n", cfg.HostName, cfg.IPAddress, cfg.UUID)
