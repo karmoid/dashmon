@@ -131,7 +131,12 @@ func getConfig(filename string, config *configuration) *configuration {
 	file, err := os.Open(filename)
 	if err != nil {
 		// fmt.Println("error:", err)
-		config = &configuration{UUID: uuid.NewV4().String(), LogicalName: "default", HostName: "", IPAddress: ""}
+		config = &configuration{
+			UUID:        uuid.NewV4().String(),
+			LogicalName: getHostname(),
+			HostName:    getHostname(),
+			IPAddress:   getOutboundIP(),
+		}
 		configSt, _ := json.Marshal(config)
 		ioutil.WriteFile(filename, configSt, 0644)
 		return config
