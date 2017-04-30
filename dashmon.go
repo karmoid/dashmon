@@ -144,7 +144,6 @@ func getConfig(filename string, config *configuration) bool {
 		return true
 	}
 	decoder := json.NewDecoder(file)
-	config = &configuration{}
 	err = decoder.Decode(config)
 	if err != nil {
 		fmt.Println("error:", err)
