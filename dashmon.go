@@ -76,8 +76,16 @@ func socCheckpoint(w http.ResponseWriter, r *http.Request) {
 	doDial("window.location=\"https://threatmap.checkpoint.com/ThreatPortal/livemap.html\"")
 }
 
+func socBKFF(w http.ResponseWriter, r *http.Request) {
+	doDial("window.location=\"http://finance.brinks.fr\"")
+}
+
 func home(w http.ResponseWriter, r *http.Request) {
 	doDial("window.location=\"about:home\"")
+}
+
+func socWordpress(w http.ResponseWriter, r *http.Request) {
+	doDial("window.location=\"http://frmonbcastapp01.emea.brinksgbl.com:88/\"")
 }
 
 func refresh(w http.ResponseWriter, r *http.Request) {
@@ -181,6 +189,8 @@ func main() {
 	mux["/home"] = home
 	mux["/refresh"] = refresh
 	mux["/checkpoint"] = socCheckpoint
+	mux["/bkff"] = socBKFF
+	mux["/wordpress"] = socWordpress
 
 	log.Fatal(server.ListenAndServe())
 }
