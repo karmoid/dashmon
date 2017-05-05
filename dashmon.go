@@ -73,26 +73,42 @@ func status(w http.ResponseWriter, r *http.Request) {
 }
 
 func socCheckpoint(w http.ResponseWriter, r *http.Request) {
+	io.WriteString(w, "Ok")
 	doDial("window.location=\"https://threatmap.checkpoint.com/ThreatPortal/livemap.html\"")
 }
 
 func socBKFF(w http.ResponseWriter, r *http.Request) {
+	io.WriteString(w, "Ok")
 	doDial("window.location=\"http://finance.brinks.fr\"")
 }
 
 func home(w http.ResponseWriter, r *http.Request) {
+	io.WriteString(w, "Ok")
 	doDial("window.location=\"about:home\"")
 }
 
 func socWordpress(w http.ResponseWriter, r *http.Request) {
+	io.WriteString(w, "Ok")
 	doDial("window.location=\"http://frmonbcastapp01.emea.brinksgbl.com:88/\"")
 }
 
+func socPlay(w http.ResponseWriter, r *http.Request) {
+	io.WriteString(w, "PLay list On")
+	for _,element := range cfg.PlayList {
+		doDial(fmt.Sprintf("window.location=\"%s\"", element.Url))
+		fmt.Println("playing:", element.Url, " then wait:", element.Seconds, "seconds")
+		time.Sleep(element.Seconds * time.Second)
+	}	
+
+}
+
 func refresh(w http.ResponseWriter, r *http.Request) {
+	io.WriteString(w, "Ok")
 	doDial("reload")
 }
 
 func dashboard(w http.ResponseWriter, r *http.Request) {
+	io.WriteString(w, "Ok")
 	u := r.URL
 	// fmt.Println(u.Host)
 	// fmt.Println(u.Path)
@@ -123,12 +139,18 @@ func doDial(cmd string) {
 
 }
 
+type playItem struct {
+	Url     string
+	Seconds time.Duration
+}
+
 type configuration struct {
 	UUID          string
 	LogicalName   string
 	HostName      string
 	IPAddress     string
 	DashboardSite string
+	PlayList      []playItem
 }
 
 var mux map[string]func(http.ResponseWriter, *http.Request)
@@ -140,7 +162,7 @@ var cfg configuration
 func getConfig(filename string, config *configuration) bool {
 	file, err := os.Open(filename)
 	if err != nil {
-		// fmt.Println("error:", err)
+		fmt.Println("error:", err)
 		config.UUID = uuid.NewV4().String()
 		config.LogicalName = getHostname()
 		config.HostName = getHostname()
@@ -151,12 +173,20 @@ func getConfig(filename string, config *configuration) bool {
 		ioutil.WriteFile(filename, configSt, 0644)
 		return true
 	}
+	fmt.Println("Nous allons décoder", file)
 	decoder := json.NewDecoder(file)
 	err = decoder.Decode(config)
 	if err != nil {
 		fmt.Println("error:", err)
 		return false
 	}
+	fmt.Println("Config décodée")
+	for index,element := range config.PlayList {
+		fmt.Println("Index(",index,") - url:",element.Url," pendant ",element.Seconds," secondes.")
+	  // index is the index where we are
+	  // element is the element from someSlice for where we are
+	}	
+
 	config.HostName = getHostname()
 	config.IPAddress = getOutboundIP()
 	return true
@@ -191,6 +221,7 @@ func main() {
 	mux["/checkpoint"] = socCheckpoint
 	mux["/bkff"] = socBKFF
 	mux["/wordpress"] = socWordpress
+	mux["/play"] = socPlay
 
 	log.Fatal(server.ListenAndServe())
 }
