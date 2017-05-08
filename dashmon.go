@@ -17,12 +17,103 @@ import (
 	"net"
 	"net/http"
 	// "net/url"
+	"bytes"
 	"os"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/satori/go.uuid"
 )
+
+// Type de commande utilisable dans le mode PlayList
+const (
+	PlayCmdNone uint = iota
+	PlayCmdURL
+	PlayCmdLoop
+)
+
+// Type de commande utilisable dans le mode PlayList
+const (
+	PlayModeNone uint = iota
+	PlayModeGo
+	PlayModeStop
+)
+
+type playItem struct {
+	Cmd   uint
+	Param string
+	Value int64
+}
+
+type configuration struct {
+	UUID          string
+	LogicalName   string
+	HostName      string
+	IPAddress     string
+	DashboardSite string
+	PlayList      []playItem
+}
+
+type playContext struct {
+	playList []playItem
+	playItem int64
+	playMode uint
+	mux      sync.Mutex
+}
+
+var playContexte playContext
+
+// Inc increments the counter for the given key.
+func (c *playContext) SetNewPlayList(playList *[]playItem) {
+	c.mux.Lock()
+	// Lock so only one goroutine at a time can access the map c.v.
+	c.playList = *playList
+	c.playItem = 0
+	c.mux.Unlock()
+}
+
+// Inc increments the counter for the given key.
+func (c *playContext) SetPlayMode(mode uint) {
+	c.mux.Lock()
+	// Lock so only one goroutine at a time can access the map c.v.
+	c.playMode = mode
+	c.mux.Unlock()
+}
+
+// Return the current Play Mode (Go or Stop)
+func (c *playContext) GetPlayMode() uint {
+	c.mux.Lock()
+	// Lock so only one goroutine at a time can access the map c.v.
+	defer c.mux.Unlock()
+	return c.playMode
+}
+
+// Value returns the current value of the counter for the given key.
+func (c *playContext) GetCurrentPlayList() string {
+	c.mux.Lock()
+	// Lock so only one goroutine at a time can access the map c.v.
+	defer c.mux.Unlock()
+	return c.playList[c.playItem].Param
+}
+
+// Value returns the current value of the counter for the given key.
+func (c *playContext) GetNextPlayList() string {
+	c.mux.Lock()
+	// Lock so only one goroutine at a time can access the map c.v.
+	defer c.mux.Unlock()
+	c.playItem++
+	if c.playItem < int64(len(c.playList)) {
+		switch c.playList[c.playItem].Cmd {
+		case PlayCmdLoop:
+			c.playItem = c.playList[c.playItem].Value
+			return c.playList[c.playItem].Param
+		case PlayCmdURL:
+			return c.playList[c.playItem].Param
+		}
+	}
+	return ""
+}
 
 // Get preferred outbound ip of this machine
 func getOutboundIP() string {
@@ -92,14 +183,33 @@ func socWordpress(w http.ResponseWriter, r *http.Request) {
 	doDial("window.location=\"http://frmonbcastapp01.emea.brinksgbl.com:88/\"")
 }
 
-func socPlay(w http.ResponseWriter, r *http.Request) {
-	io.WriteString(w, "PLay list On")
-	for _,element := range cfg.PlayList {
-		doDial(fmt.Sprintf("window.location=\"%s\"", element.Url))
-		fmt.Println("playing:", element.Url, " then wait:", element.Seconds, "seconds")
-		time.Sleep(element.Seconds * time.Second)
-	}	
+func playlistRoutine() {
+	currURL := playContexte.GetCurrentPlayList()
+	playContexte.playMode = PlayModeGo
+	for currURL != "" {
+		if playContexte.GetPlayMode() == PlayModeGo {
+			doDial(fmt.Sprintf("window.location=\"%s\"", currURL))
+			fmt.Println("playing:", currURL, " then wait:", 10, "seconds")
+			time.Sleep(time.Duration(10) * time.Second)
+			currURL = playContexte.GetNextPlayList()
+		}
+	}
+	playContexte.SetPlayMode(PlayModeNone)
+	fmt.Println("Exiting PlayList")
+}
 
+func socPlay(w http.ResponseWriter, r *http.Request) {
+	if playContexte.GetPlayMode() == PlayModeGo {
+		io.WriteString(w, "PLay list ALREADY On")
+		return
+	}
+	io.WriteString(w, "PLay list On")
+	go playlistRoutine()
+}
+
+func socStop(w http.ResponseWriter, r *http.Request) {
+	io.WriteString(w, "PLay list Off")
+	playContexte.SetPlayMode(PlayModeStop)
 }
 
 func refresh(w http.ResponseWriter, r *http.Request) {
@@ -139,20 +249,6 @@ func doDial(cmd string) {
 
 }
 
-type playItem struct {
-	Url     string
-	Seconds time.Duration
-}
-
-type configuration struct {
-	UUID          string
-	LogicalName   string
-	HostName      string
-	IPAddress     string
-	DashboardSite string
-	PlayList      []playItem
-}
-
 var mux map[string]func(http.ResponseWriter, *http.Request)
 var remoteHostname string
 var remotePortnum string
@@ -167,7 +263,7 @@ func getConfig(filename string, config *configuration) bool {
 		config.LogicalName = getHostname()
 		config.HostName = getHostname()
 		config.IPAddress = getOutboundIP()
-		config.DashboardSite = "http://localhost:3030/"
+		config.DashboardSite = "http://localhost:3000/devices"
 		configSt, _ := json.Marshal(config)
 		fmt.Println("config:", configSt)
 		ioutil.WriteFile(filename, configSt, 0644)
@@ -181,22 +277,57 @@ func getConfig(filename string, config *configuration) bool {
 		return false
 	}
 	fmt.Println("Config décodée")
-	for index,element := range config.PlayList {
-		fmt.Println("Index(",index,") - url:",element.Url," pendant ",element.Seconds," secondes.")
-	  // index is the index where we are
-	  // element is the element from someSlice for where we are
-	}	
+	for index, element := range config.PlayList {
+		fmt.Println("Index(", index, ") - Cmd:", element.Cmd, " Param:", element.Param, " Value:", element.Value, ".")
+		// index is the index where we are
+		// element is the element from someSlice for where we are
+	}
 
 	config.HostName = getHostname()
 	config.IPAddress = getOutboundIP()
 	return true
 }
 
+func contactWebService(config *configuration) {
+	values := map[string]string{"name": cfg.LogicalName, "ip": cfg.IPAddress, "uuid": cfg.UUID}
+	jsonValue, _ := json.Marshal(values)
+	resp, err := http.Post(cfg.DashboardSite, "application/json", bytes.NewBuffer(jsonValue))
+	if err != nil {
+		fmt.Println("response:", resp, " error:", err)
+		return
+	}
+	defer resp.Body.Close()
+	body, err := ioutil.ReadAll(resp.Body)
+	if err == nil {
+		var dat map[string]interface{}
+		if err := json.Unmarshal(body, &dat); err != nil {
+			panic(err)
+		}
+		fmt.Println("body:", dat)
+	}
+}
+
 func main() {
+	playContexte = playContext{playItem: 0}
 	if !getConfig("properties.json", &cfg) {
 		return
 	}
+
+	contactWebService(&cfg)
+
+	playContexte.SetNewPlayList(&cfg.PlayList)
 	fmt.Printf("%s(%s):%s\n", cfg.HostName, cfg.IPAddress, cfg.UUID)
+
+	// fmt.Printf("Current Item %d (%s)\n", playContexte.playItem, playContexte.GetCurrentPlayList())
+	// fmt.Printf("Current Item %d (%s)\n", playContexte.playItem, playContexte.GetNextPlayList())
+	// fmt.Printf("Current Item %d (%s)\n", playContexte.playItem, playContexte.GetNextPlayList())
+	// fmt.Printf("Current Item %d (%s)\n", playContexte.playItem, playContexte.GetNextPlayList())
+	// fmt.Printf("Current Item %d (%s)\n", playContexte.playItem, playContexte.GetNextPlayList())
+	// fmt.Printf("Current Item %d (%s)\n", playContexte.playItem, playContexte.GetNextPlayList())
+	// fmt.Printf("Current Item %d (%s)\n", playContexte.playItem, playContexte.GetNextPlayList())
+	// fmt.Printf("Current Item %d (%s)\n", playContexte.playItem, playContexte.GetNextPlayList())
+	// fmt.Printf("Current Item %d (%s)\n", playContexte.playItem, playContexte.GetNextPlayList())
+	// fmt.Printf("Current Item %d (%s)\n", playContexte.playItem, playContexte.GetNextPlayList())
 
 	portNumPtr := flag.Int("port", 8000, "Port")
 	remoteHostnamePtr := flag.String("remotehost", "localhost", "Remote host")
@@ -222,6 +353,7 @@ func main() {
 	mux["/bkff"] = socBKFF
 	mux["/wordpress"] = socWordpress
 	mux["/play"] = socPlay
+	mux["/stop"] = socStop
 
 	log.Fatal(server.ListenAndServe())
 }
