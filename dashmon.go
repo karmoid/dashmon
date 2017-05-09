@@ -19,6 +19,7 @@ import (
 	// "net/url"
 	"bytes"
 	"os"
+	"runtime"
 	"sort"
 	"strings"
 	"sync"
@@ -162,6 +163,21 @@ func status(w http.ResponseWriter, r *http.Request) {
 		dtcStatus = "lien coupé"
 	}
 	io.WriteString(w, "<div class='statushost'>"+getHostname()+"</div><div class='statusip'>"+getOutboundIP()+"</div><div class='statusdtc'>"+dtcStatus+"</div>")
+	io.WriteString(w, fmt.Sprintf("<div><p>%s-%s(%s) %d cpu(s)</p></div>", runtime.GOOS, runtime.GOARCH, runtime.Compiler, runtime.NumCPU()))
+	switch playContexte.playMode {
+	case PlayModeGo:
+		io.WriteString(w, fmt.Sprintf("<div><h2>Now playing (%d) : %s</h2></div>", playContexte.playItem, playContexte.GetCurrentPlayList().Param))
+	case PlayModeStop:
+		io.WriteString(w, fmt.Sprintf("<div><h2>Stopped on (%d) : %s</h2></div>", playContexte.playItem, playContexte.GetCurrentPlayList().Param))
+	default:
+		io.WriteString(w, "<div><h2>Not playing</h2></div>")
+	}
+
+	io.WriteString(w, "<div><table><tr><th>Index</th><th>Cmd</th><th>Element</th><th>Value</th></tr>")
+	for index, element := range playContexte.playList {
+		io.WriteString(w, fmt.Sprintf("<tr><td>%d</td><td>%d</td><td>%s</td><td>%d</td></tr>", index, element.Cmd, element.Param, element.Value))
+	}
+	io.WriteString(w, "</table></div>")
 }
 
 func socCheckpoint(w http.ResponseWriter, r *http.Request) {
