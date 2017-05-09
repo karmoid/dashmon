@@ -19,6 +19,7 @@ import (
 	// "net/url"
 	"bytes"
 	"os"
+	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -90,15 +91,15 @@ func (c *playContext) GetPlayMode() uint {
 }
 
 // Value returns the current value of the counter for the given key.
-func (c *playContext) GetCurrentPlayList() string {
+func (c *playContext) GetCurrentPlayList() playItem {
 	c.mux.Lock()
 	// Lock so only one goroutine at a time can access the map c.v.
 	defer c.mux.Unlock()
-	return c.playList[c.playItem].Param
+	return c.playList[c.playItem]
 }
 
 // Value returns the current value of the counter for the given key.
-func (c *playContext) GetNextPlayList() string {
+func (c *playContext) GetNextPlayList() playItem {
 	c.mux.Lock()
 	// Lock so only one goroutine at a time can access the map c.v.
 	defer c.mux.Unlock()
@@ -107,12 +108,12 @@ func (c *playContext) GetNextPlayList() string {
 		switch c.playList[c.playItem].Cmd {
 		case PlayCmdLoop:
 			c.playItem = c.playList[c.playItem].Value
-			return c.playList[c.playItem].Param
+			return c.playList[c.playItem]
 		case PlayCmdURL:
-			return c.playList[c.playItem].Param
+			return c.playList[c.playItem]
 		}
 	}
-	return ""
+	return playItem{}
 }
 
 // Get preferred outbound ip of this machine
@@ -186,12 +187,20 @@ func socWordpress(w http.ResponseWriter, r *http.Request) {
 func playlistRoutine() {
 	currURL := playContexte.GetCurrentPlayList()
 	playContexte.playMode = PlayModeGo
-	for currURL != "" {
+	for currURL.Param != "" {
 		if playContexte.GetPlayMode() == PlayModeGo {
-			doDial(fmt.Sprintf("window.location=\"%s\"", currURL))
-			fmt.Println("playing:", currURL, " then wait:", 10, "seconds")
-			time.Sleep(time.Duration(10) * time.Second)
+			doDial(fmt.Sprintf("window.location=\"%s\"", currURL.Param))
+			fmt.Println("playing:", currURL.Param)
+			if currURL.Value < 1 {
+				fmt.Println("wait time 0 - illimited")
+				break
+			}
+			fmt.Println("Temps à attendre:", time.Duration(currURL.Value)*time.Second)
+			time.Sleep(time.Duration(currURL.Value) * time.Second)
 			currURL = playContexte.GetNextPlayList()
+			if playContexte.GetPlayMode() != PlayModeGo {
+				break
+			}
 		}
 	}
 	playContexte.SetPlayMode(PlayModeNone)
@@ -204,12 +213,23 @@ func socPlay(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	io.WriteString(w, "PLay list On")
+
 	go playlistRoutine()
 }
 
 func socStop(w http.ResponseWriter, r *http.Request) {
 	io.WriteString(w, "PLay list Off")
 	playContexte.SetPlayMode(PlayModeStop)
+}
+
+func socReload(w http.ResponseWriter, r *http.Request) {
+	io.WriteString(w, "New pLay list")
+	playContexte.SetPlayMode(PlayModeStop)
+	contactWebService()
+	for index, element := range playContexte.playList {
+		io.WriteString(w, fmt.Sprintf("Index(%d) - Cmd()%d) - Element(%s) - Value:%d", index, element.Cmd, element.Param, element.Value))
+	}
+	socPlay(w, r)
 }
 
 func refresh(w http.ResponseWriter, r *http.Request) {
@@ -269,71 +289,165 @@ func getConfig(filename string, config *configuration) bool {
 		ioutil.WriteFile(filename, configSt, 0644)
 		return true
 	}
-	fmt.Println("Nous allons décoder", file)
+	// fmt.Println("Nous allons décoder", file)
 	decoder := json.NewDecoder(file)
 	err = decoder.Decode(config)
 	if err != nil {
 		fmt.Println("error:", err)
 		return false
 	}
-	fmt.Println("Config décodée")
-	for index, element := range config.PlayList {
-		fmt.Println("Index(", index, ") - Cmd:", element.Cmd, " Param:", element.Param, " Value:", element.Value, ".")
-		// index is the index where we are
-		// element is the element from someSlice for where we are
-	}
+	// fmt.Println("Config décodée")
+	// index is the index where we are
+	// element is the element from someSlice for where we are
 
 	config.HostName = getHostname()
 	config.IPAddress = getOutboundIP()
 	return true
 }
 
-func contactWebService(config *configuration) {
+type placeJSON struct {
+	Id     int
+	Name   string
+	Geoloc string
+}
+
+type pageJSON struct {
+	Id       int
+	Url      string
+	Note     string
+	Portrait bool
+}
+
+type playitemJSON struct {
+	Id    int
+	Order int
+	Cmd   int
+	Value int
+	Page  pageJSON
+}
+
+type playlistJSON struct {
+	Id        int
+	Name      string
+	Note      string
+	Playitems []playitemJSON
+}
+
+type deviceJSON struct {
+	Id       int
+	Name     string
+	Ip       string
+	Uuid     string
+	Place    placeJSON
+	Playlist playlistJSON
+}
+
+// ByOrder implements sort.Interface for []playitemJSON based on
+// the order field.
+type ByOrder []playitemJSON
+
+func (a ByOrder) Len() int           { return len(a) }
+func (a ByOrder) Swap(i, j int)      { a[i], a[j] = a[j], a[i] }
+func (a ByOrder) Less(i, j int) bool { return a[i].Order < a[j].Order }
+
+func enrolDevice() *deviceJSON {
+	var dev deviceJSON
 	values := map[string]string{"name": cfg.LogicalName, "ip": cfg.IPAddress, "uuid": cfg.UUID}
 	jsonValue, _ := json.Marshal(values)
-	resp, err := http.Post(cfg.DashboardSite, "application/json", bytes.NewBuffer(jsonValue))
+	resp, err := http.Post(fmt.Sprintf("%sdevices", cfg.DashboardSite), "application/json", bytes.NewBuffer(jsonValue))
 	if err != nil {
 		fmt.Println("response:", resp, " error:", err)
-		return
+		return nil
 	}
 	defer resp.Body.Close()
+
+	body, err := ioutil.ReadAll(resp.Body)
+	if err != nil {
+		fmt.Println("error:", err)
+		panic(err)
+	}
+	if err := json.Unmarshal(body, &dev); err != nil {
+		fmt.Println("body:", string(body))
+		panic(err)
+	}
+	return &dev
+}
+
+func getPlaylist(id int) *playlistJSON {
+	var dev playlistJSON
+	resp, err := http.Get(fmt.Sprintf("%splaylists/%d.json", cfg.DashboardSite, id))
+	if err != nil {
+		fmt.Println("response:", resp, " error:", err)
+		return nil
+	}
+	defer resp.Body.Close()
+
 	body, err := ioutil.ReadAll(resp.Body)
 	if err == nil {
-		var dat map[string]interface{}
-		if err := json.Unmarshal(body, &dat); err != nil {
+		if err := json.Unmarshal(body, &dev); err != nil {
+			fmt.Println("body:", string(body))
 			panic(err)
 		}
-		fmt.Println("body:", dat)
+		return &dev
+	}
+	return nil
+}
+
+func contactWebService() {
+	dev := enrolDevice()
+	if dev != nil {
+		play := getPlaylist(dev.Playlist.Id)
+		// fmt.Println("body:", play)
+		sort.Sort(ByOrder(play.Playitems))
+		// fmt.Println("body:", play)
+		pL := make([]playItem, len(play.Playitems))
+		for i, p := range play.Playitems {
+			pL[i].Cmd = uint(p.Cmd)
+			pL[i].Param = p.Page.Url
+			pL[i].Value = int64(p.Value)
+		}
+		playContexte.SetNewPlayList(&pL)
 	}
 }
 
 func main() {
-	playContexte = playContext{playItem: 0}
+	playContexte = playContext{}
 	if !getConfig("properties.json", &cfg) {
 		return
 	}
 
-	contactWebService(&cfg)
-
-	playContexte.SetNewPlayList(&cfg.PlayList)
-	fmt.Printf("%s(%s):%s\n", cfg.HostName, cfg.IPAddress, cfg.UUID)
-
-	// fmt.Printf("Current Item %d (%s)\n", playContexte.playItem, playContexte.GetCurrentPlayList())
-	// fmt.Printf("Current Item %d (%s)\n", playContexte.playItem, playContexte.GetNextPlayList())
-	// fmt.Printf("Current Item %d (%s)\n", playContexte.playItem, playContexte.GetNextPlayList())
-	// fmt.Printf("Current Item %d (%s)\n", playContexte.playItem, playContexte.GetNextPlayList())
-	// fmt.Printf("Current Item %d (%s)\n", playContexte.playItem, playContexte.GetNextPlayList())
-	// fmt.Printf("Current Item %d (%s)\n", playContexte.playItem, playContexte.GetNextPlayList())
-	// fmt.Printf("Current Item %d (%s)\n", playContexte.playItem, playContexte.GetNextPlayList())
-	// fmt.Printf("Current Item %d (%s)\n", playContexte.playItem, playContexte.GetNextPlayList())
-	// fmt.Printf("Current Item %d (%s)\n", playContexte.playItem, playContexte.GetNextPlayList())
-	// fmt.Printf("Current Item %d (%s)\n", playContexte.playItem, playContexte.GetNextPlayList())
-
 	portNumPtr := flag.Int("port", 8000, "Port")
 	remoteHostnamePtr := flag.String("remotehost", "localhost", "Remote host")
 	remotePortnumPtr := flag.Int("remoteport", 32000, "Remote port")
+	noAutomaticEnrolmentPtr := flag.Bool("noautomatic", false, fmt.Sprintf("No automatic enrolment on %s", cfg.DashboardSite))
 
 	flag.Parse()
+
+	if !*noAutomaticEnrolmentPtr {
+		fmt.Printf("Enrolment on %s\n", cfg.DashboardSite)
+		contactWebService()
+	}
+	if *noAutomaticEnrolmentPtr {
+		playContexte.SetNewPlayList(&cfg.PlayList)
+	}
+
+	for index, element := range playContexte.playList {
+		fmt.Println("Index(", index, ") - Cmd:", element.Cmd, " Param:", element.Param, " Value:", element.Value, ".")
+	}
+
+	// fmt.Printf("Current Item %d (%s)\n", playContexte.playItem, playContexte.GetCurrentPlayList().Param)
+	// fmt.Printf("Current Item %d (%s)\n", playContexte.playItem, playContexte.GetNextPlayList().Param)
+	// fmt.Printf("Current Item %d (%s)\n", playContexte.playItem, playContexte.GetNextPlayList().Param)
+	// fmt.Printf("Current Item %d (%s)\n", playContexte.playItem, playContexte.GetNextPlayList().Param)
+	// fmt.Printf("Current Item %d (%s)\n", playContexte.playItem, playContexte.GetNextPlayList().Param)
+	// fmt.Printf("Current Item %d (%s)\n", playContexte.playItem, playContexte.GetNextPlayList().Param)
+	// fmt.Printf("Current Item %d (%s)\n", playContexte.playItem, playContexte.GetNextPlayList().Param)
+	// fmt.Printf("Current Item %d (%s)\n", playContexte.playItem, playContexte.GetNextPlayList().Param)
+	// fmt.Printf("Current Item %d (%s)\n", playContexte.playItem, playContexte.GetNextPlayList().Param)
+	// fmt.Printf("Current Item %d (%s)\n", playContexte.playItem, playContexte.GetNextPlayList().Param)
+
+	fmt.Printf("%s(%s):%s\n", cfg.HostName, cfg.IPAddress, cfg.UUID)
+
 	remoteHostname = *remoteHostnamePtr
 	remotePortnum = fmt.Sprintf("%v", *remotePortnumPtr)
 
@@ -354,6 +468,7 @@ func main() {
 	mux["/wordpress"] = socWordpress
 	mux["/play"] = socPlay
 	mux["/stop"] = socStop
+	mux["/reload"] = socReload
 
 	log.Fatal(server.ListenAndServe())
 }
