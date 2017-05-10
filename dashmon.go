@@ -54,14 +54,16 @@ type configuration struct {
 	HostName      string
 	IPAddress     string
 	DashboardSite string
+	internalID    int
 	PlayList      []playItem
 }
 
 type playContext struct {
-	playList []playItem
-	playItem int64
-	playMode uint
-	mux      sync.Mutex
+	playList   []playItem
+	playItem   int64
+	playMode   uint
+	playRemain int64
+	mux        sync.Mutex
 }
 
 var playContexte playContext
@@ -70,17 +72,26 @@ var playContexte playContext
 func (c *playContext) SetNewPlayList(playList *[]playItem) {
 	c.mux.Lock()
 	// Lock so only one goroutine at a time can access the map c.v.
+	defer c.mux.Unlock()
 	c.playList = *playList
 	c.playItem = 0
-	c.mux.Unlock()
+	c.playRemain = 0
+}
+
+func (c *playContext) timeElpased() bool {
+	c.mux.Lock()
+	// Lock so only one goroutine at a time can access the map c.v.
+	defer c.mux.Unlock()
+	c.playRemain--
+	return c.playRemain < 1 || c.playMode != PlayModeGo
 }
 
 // Inc increments the counter for the given key.
 func (c *playContext) SetPlayMode(mode uint) {
 	c.mux.Lock()
 	// Lock so only one goroutine at a time can access the map c.v.
+	defer c.mux.Unlock()
 	c.playMode = mode
-	c.mux.Unlock()
 }
 
 // Return the current Play Mode (Go or Stop)
@@ -91,11 +102,20 @@ func (c *playContext) GetPlayMode() uint {
 	return c.playMode
 }
 
+// Return the current Play Item
+func (c *playContext) GetPlayItem() int64 {
+	c.mux.Lock()
+	// Lock so only one goroutine at a time can access the map c.v.
+	defer c.mux.Unlock()
+	return c.playItem
+}
+
 // Value returns the current value of the counter for the given key.
 func (c *playContext) GetCurrentPlayList() playItem {
 	c.mux.Lock()
 	// Lock so only one goroutine at a time can access the map c.v.
 	defer c.mux.Unlock()
+	c.playRemain = c.playList[c.playItem].Value
 	return c.playList[c.playItem]
 }
 
@@ -104,14 +124,18 @@ func (c *playContext) GetNextPlayList() playItem {
 	c.mux.Lock()
 	// Lock so only one goroutine at a time can access the map c.v.
 	defer c.mux.Unlock()
-	c.playItem++
-	if c.playItem < int64(len(c.playList)) {
-		switch c.playList[c.playItem].Cmd {
-		case PlayCmdLoop:
-			c.playItem = c.playList[c.playItem].Value
-			return c.playList[c.playItem]
-		case PlayCmdURL:
-			return c.playList[c.playItem]
+	if c.playMode == PlayModeGo {
+		c.playItem++
+		if c.playItem < int64(len(c.playList)) {
+			switch c.playList[c.playItem].Cmd {
+			case PlayCmdLoop:
+				c.playItem = c.playList[c.playItem].Value
+				c.playRemain = c.playList[c.playItem].Value
+				return c.playList[c.playItem]
+			case PlayCmdURL:
+				c.playRemain = c.playList[c.playItem].Value
+				return c.playList[c.playItem]
+			}
 		}
 	}
 	return playItem{}
@@ -164,11 +188,15 @@ func status(w http.ResponseWriter, r *http.Request) {
 	}
 	io.WriteString(w, "<div class='statushost'>"+getHostname()+"</div><div class='statusip'>"+getOutboundIP()+"</div><div class='statusdtc'>"+dtcStatus+"</div>")
 	io.WriteString(w, fmt.Sprintf("<div><p>%s-%s(%s) %d cpu(s)</p></div>", runtime.GOOS, runtime.GOARCH, runtime.Compiler, runtime.NumCPU()))
+	playContexte.mux.Lock()
+	defer playContexte.mux.Unlock()
+	pItem := playContexte.playItem
+	item := playContexte.playList[pItem]
 	switch playContexte.playMode {
 	case PlayModeGo:
-		io.WriteString(w, fmt.Sprintf("<div><h2>Now playing (%d) : %s</h2></div>", playContexte.playItem, playContexte.GetCurrentPlayList().Param))
+		io.WriteString(w, fmt.Sprintf("<div><h2>Now playing (%d) : %s (wait:%d/%d)</h2></div>", pItem, item.Param, playContexte.playRemain, item.Value))
 	case PlayModeStop:
-		io.WriteString(w, fmt.Sprintf("<div><h2>Stopped on (%d) : %s</h2></div>", playContexte.playItem, playContexte.GetCurrentPlayList().Param))
+		io.WriteString(w, fmt.Sprintf("<div><h2>Stopped on (%d) : %s</h2></div>", pItem, item.Param))
 	default:
 		io.WriteString(w, "<div><h2>Not playing</h2></div>")
 	}
@@ -178,31 +206,46 @@ func status(w http.ResponseWriter, r *http.Request) {
 		io.WriteString(w, fmt.Sprintf("<tr><td>%d</td><td>%d</td><td>%s</td><td>%d</td></tr>", index, element.Cmd, element.Param, element.Value))
 	}
 	io.WriteString(w, "</table></div>")
+
+	io.WriteString(w, fmt.Sprintf("<div><a href=\"%sdevices/%d/start\">Start</a></div>", cfg.DashboardSite, cfg.internalID))
+	io.WriteString(w, fmt.Sprintf("<div><a href=\"%sdevices/%d/stop\">Stop</a></div>", cfg.DashboardSite, cfg.internalID))
+	io.WriteString(w, fmt.Sprintf("<div><a href=\"%sdevices/%d/reload\">Reload</a></div>", cfg.DashboardSite, cfg.internalID))
+
+	w.WriteHeader(http.StatusOK)
+
 }
 
 func socCheckpoint(w http.ResponseWriter, r *http.Request) {
+	playContexte.SetPlayMode(PlayModeStop)
 	io.WriteString(w, "Ok")
 	doDial("window.location=\"https://threatmap.checkpoint.com/ThreatPortal/livemap.html\"")
+	w.WriteHeader(http.StatusOK)
 }
 
 func socBKFF(w http.ResponseWriter, r *http.Request) {
+	playContexte.SetPlayMode(PlayModeStop)
 	io.WriteString(w, "Ok")
 	doDial("window.location=\"http://finance.brinks.fr\"")
+	w.WriteHeader(http.StatusOK)
 }
 
 func home(w http.ResponseWriter, r *http.Request) {
+	playContexte.SetPlayMode(PlayModeStop)
 	io.WriteString(w, "Ok")
 	doDial("window.location=\"about:home\"")
+	w.WriteHeader(http.StatusOK)
 }
 
 func socWordpress(w http.ResponseWriter, r *http.Request) {
+	playContexte.SetPlayMode(PlayModeStop)
 	io.WriteString(w, "Ok")
 	doDial("window.location=\"http://frmonbcastapp01.emea.brinksgbl.com:88/\"")
+	w.WriteHeader(http.StatusOK)
 }
 
 func playlistRoutine() {
 	currURL := playContexte.GetCurrentPlayList()
-	playContexte.playMode = PlayModeGo
+	playContexte.SetPlayMode(PlayModeGo)
 	for currURL.Param != "" {
 		if playContexte.GetPlayMode() == PlayModeGo {
 			doDial(fmt.Sprintf("window.location=\"%s\"", currURL.Param))
@@ -212,7 +255,9 @@ func playlistRoutine() {
 				break
 			}
 			fmt.Println("Temps à attendre:", time.Duration(currURL.Value)*time.Second)
-			time.Sleep(time.Duration(currURL.Value) * time.Second)
+			for !playContexte.timeElpased() {
+				time.Sleep(time.Duration(1) * time.Second)
+			}
 			currURL = playContexte.GetNextPlayList()
 			if playContexte.GetPlayMode() != PlayModeGo {
 				break
@@ -229,6 +274,7 @@ func socPlay(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	io.WriteString(w, "PLay list On")
+	w.WriteHeader(http.StatusOK)
 
 	go playlistRoutine()
 }
@@ -236,6 +282,7 @@ func socPlay(w http.ResponseWriter, r *http.Request) {
 func socStop(w http.ResponseWriter, r *http.Request) {
 	io.WriteString(w, "PLay list Off")
 	playContexte.SetPlayMode(PlayModeStop)
+	w.WriteHeader(http.StatusOK)
 }
 
 func socReload(w http.ResponseWriter, r *http.Request) {
@@ -246,11 +293,13 @@ func socReload(w http.ResponseWriter, r *http.Request) {
 		io.WriteString(w, fmt.Sprintf("Index(%d) - Cmd()%d) - Element(%s) - Value:%d", index, element.Cmd, element.Param, element.Value))
 	}
 	socPlay(w, r)
+	w.WriteHeader(http.StatusOK)
 }
 
 func refresh(w http.ResponseWriter, r *http.Request) {
 	io.WriteString(w, "Ok")
 	doDial("reload")
+	w.WriteHeader(http.StatusOK)
 }
 
 func dashboard(w http.ResponseWriter, r *http.Request) {
@@ -261,6 +310,7 @@ func dashboard(w http.ResponseWriter, r *http.Request) {
 	// fmt.Println(u.String())
 	// fmt.Println(u.RawQuery)
 	doDial(fmt.Sprintf("window.location=\"%s%s\"", cfg.DashboardSite, u.RawQuery))
+	w.WriteHeader(http.StatusOK)
 }
 
 func doDial(cmd string) {
@@ -299,7 +349,7 @@ func getConfig(filename string, config *configuration) bool {
 		config.LogicalName = getHostname()
 		config.HostName = getHostname()
 		config.IPAddress = getOutboundIP()
-		config.DashboardSite = "http://localhost:3000/devices"
+		config.DashboardSite = "http://localhost:3100/"
 		configSt, _ := json.Marshal(config)
 		fmt.Println("config:", configSt)
 		ioutil.WriteFile(filename, configSt, 0644)
@@ -412,6 +462,7 @@ func getPlaylist(id int) *playlistJSON {
 func contactWebService() {
 	dev := enrolDevice()
 	if dev != nil {
+		cfg.internalID = dev.Id
 		play := getPlaylist(dev.Playlist.Id)
 		// fmt.Println("body:", play)
 		sort.Sort(ByOrder(play.Playitems))
