@@ -215,19 +215,19 @@ func status(w http.ResponseWriter, r *http.Request) {
 
 }
 
-func socCheckpoint(w http.ResponseWriter, r *http.Request) {
-	playContexte.SetPlayMode(PlayModeStop)
-	io.WriteString(w, "Ok")
-	doDial("window.location=\"https://threatmap.checkpoint.com/ThreatPortal/livemap.html\"")
-	w.WriteHeader(http.StatusOK)
-}
-
-func socBKFF(w http.ResponseWriter, r *http.Request) {
-	playContexte.SetPlayMode(PlayModeStop)
-	io.WriteString(w, "Ok")
-	doDial("window.location=\"http://finance.brinks.fr\"")
-	w.WriteHeader(http.StatusOK)
-}
+// func socCheckpoint(w http.ResponseWriter, r *http.Request) {
+// 	playContexte.SetPlayMode(PlayModeStop)
+// 	io.WriteString(w, "Ok")
+// 	doDial("window.location=\"https://threatmap.checkpoint.com/ThreatPortal/livemap.html\"")
+// 	w.WriteHeader(http.StatusOK)
+// }
+//
+// func socBKFF(w http.ResponseWriter, r *http.Request) {
+// 	playContexte.SetPlayMode(PlayModeStop)
+// 	io.WriteString(w, "Ok")
+// 	doDial("window.location=\"http://finance.brinks.fr\"")
+// 	w.WriteHeader(http.StatusOK)
+// }
 
 func home(w http.ResponseWriter, r *http.Request) {
 	playContexte.SetPlayMode(PlayModeStop)
@@ -236,12 +236,12 @@ func home(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusOK)
 }
 
-func socWordpress(w http.ResponseWriter, r *http.Request) {
-	playContexte.SetPlayMode(PlayModeStop)
-	io.WriteString(w, "Ok")
-	doDial("window.location=\"http://frmonbcastapp01.emea.brinksgbl.com:88/\"")
-	w.WriteHeader(http.StatusOK)
-}
+// func socWordpress(w http.ResponseWriter, r *http.Request) {
+// 	playContexte.SetPlayMode(PlayModeStop)
+// 	io.WriteString(w, "Ok")
+// 	doDial("window.location=\"http://frmonbcastapp01.emea.brinksgbl.com:88/\"")
+// 	w.WriteHeader(http.StatusOK)
+// }
 
 func playlistRoutine() {
 	currURL := playContexte.GetCurrentPlayList()
@@ -302,16 +302,16 @@ func refresh(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusOK)
 }
 
-func dashboard(w http.ResponseWriter, r *http.Request) {
-	io.WriteString(w, "Ok")
-	u := r.URL
-	// fmt.Println(u.Host)
-	// fmt.Println(u.Path)
-	// fmt.Println(u.String())
-	// fmt.Println(u.RawQuery)
-	doDial(fmt.Sprintf("window.location=\"%s%s\"", cfg.DashboardSite, u.RawQuery))
-	w.WriteHeader(http.StatusOK)
-}
+// func dashboard(w http.ResponseWriter, r *http.Request) {
+// 	io.WriteString(w, "Ok")
+// 	u := r.URL
+// 	// fmt.Println(u.Host)
+// 	// fmt.Println(u.Path)
+// 	// fmt.Println(u.String())
+// 	// fmt.Println(u.RawQuery)
+// 	doDial(fmt.Sprintf("window.location=\"%s%s\"", cfg.DashboardSite, u.RawQuery))
+// 	w.WriteHeader(http.StatusOK)
+// }
 
 func doDial(cmd string) {
 	// connect to this socket
@@ -526,13 +526,13 @@ func main() {
 	mux = make(map[string]func(http.ResponseWriter, *http.Request))
 	mux["/"] = hello
 	//
-	mux["/dashboard"] = dashboard
+	// mux["/dashboard"] = dashboard
 	mux["/status"] = status
 	mux["/home"] = home
 	mux["/refresh"] = refresh
-	mux["/checkpoint"] = socCheckpoint
-	mux["/bkff"] = socBKFF
-	mux["/wordpress"] = socWordpress
+	// mux["/checkpoint"] = socCheckpoint
+	// mux["/bkff"] = socBKFF
+	// mux["/wordpress"] = socWordpress
 	mux["/play"] = socPlay
 	mux["/stop"] = socStop
 	mux["/reload"] = socReload
