@@ -8,6 +8,7 @@ package main
 
 import (
 	"bufio"
+	"bytes"
 	"encoding/json"
 	"flag"
 	"fmt"
@@ -16,18 +17,16 @@ import (
 	"log"
 	"net"
 	"net/http"
-	"strconv"
-	// "net/URL"
-	"bytes"
 	"os"
 	"runtime"
 	"sort"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
 
-	"github.com/jtblin/go-ldap-client"
-	"github.com/satori/go.uuid"
+	ldap "github.com/jtblin/go-ldap-client"
+	uuid "github.com/satori/go.uuid"
 )
 
 // Type de commande utilisable dans le mode PlayList
