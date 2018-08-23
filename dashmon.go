@@ -16,7 +16,8 @@ import (
 	"log"
 	"net"
 	"net/http"
-	// "net/url"
+	"strconv"
+	// "net/URL"
 	"bytes"
 	"os"
 	"runtime"
@@ -25,6 +26,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/jtblin/go-ldap-client"
 	"github.com/satori/go.uuid"
 )
 
@@ -67,6 +69,8 @@ type playContext struct {
 }
 
 var playContexte playContext
+
+// var ldapAuth ldap.Source
 
 // Inc increments the counter for the given key.
 func (c *playContext) SetNewPlayList(playList *[]playItem) {
@@ -141,7 +145,7 @@ func (c *playContext) GetNextPlayList() playItem {
 	return playItem{}
 }
 
-// Get preferred outbound ip of this machine
+// Get preferred outbound IP of this machine
 func getOutboundIP() string {
 	conn, err := net.Dial("udp", "8.8.8.8:80")
 	if err != nil {
@@ -163,7 +167,7 @@ func getHostname() string {
 	return hostname
 }
 
-// Get preferred outbound ip of this machine
+// Get preferred outbound IP of this machine
 func testDTCIP() bool {
 	fmt.Printf("Verif DTC @ %s", time.Now().Format("02/01/2006 15:04:05")) // 31/12/2015 08:34:12
 	conn, err := net.DialTimeout("udp", "10.135.9.62:80", time.Second)
@@ -207,9 +211,9 @@ func status(w http.ResponseWriter, r *http.Request) {
 	}
 	io.WriteString(w, "</table></div>")
 
-	io.WriteString(w, fmt.Sprintf("<div><a href=\"%sdevices/%d/start\">Start</a></div>", cfg.DashboardSite, cfg.internalID))
-	io.WriteString(w, fmt.Sprintf("<div><a href=\"%sdevices/%d/stop\">Stop</a></div>", cfg.DashboardSite, cfg.internalID))
-	io.WriteString(w, fmt.Sprintf("<div><a href=\"%sdevices/%d/reload\">Reload</a></div>", cfg.DashboardSite, cfg.internalID))
+	// io.WriteString(w, fmt.Sprintf("<div><a href=\"%sdevices/%d/start\">Start</a></div>", cfg.DashboardSite, cfg.internalID))
+	// io.WriteString(w, fmt.Sprintf("<div><a href=\"%sdevices/%d/stop\">Stop</a></div>", cfg.DashboardSite, cfg.internalID))
+	// io.WriteString(w, fmt.Sprintf("<div><a href=\"%sdevices/%d/reload\">Reload</a></div>", cfg.DashboardSite, cfg.internalID))
 
 	w.WriteHeader(http.StatusOK)
 
@@ -280,7 +284,7 @@ func socPlay(w http.ResponseWriter, r *http.Request) {
 }
 
 func socStop(w http.ResponseWriter, r *http.Request) {
-	io.WriteString(w, "PLay list Off")
+	io.WriteString(w, "Play list Off")
 	playContexte.SetPlayMode(PlayModeStop)
 	w.WriteHeader(http.StatusOK)
 }
@@ -372,20 +376,20 @@ func getConfig(filename string, config *configuration) bool {
 }
 
 type placeJSON struct {
-	Id     int
+	ID     int
 	Name   string
 	Geoloc string
 }
 
 type pageJSON struct {
-	Id       int
-	Url      string
+	ID       int
+	URL      string
 	Note     string
 	Portrait bool
 }
 
 type playitemJSON struct {
-	Id    int
+	ID    int
 	Order int
 	Cmd   int
 	Value int
@@ -393,16 +397,16 @@ type playitemJSON struct {
 }
 
 type playlistJSON struct {
-	Id        int
+	ID        int
 	Name      string
 	Note      string
 	Playitems []playitemJSON
 }
 
 type deviceJSON struct {
-	Id       int
+	ID       int
 	Name     string
-	Ip       string
+	IP       string
 	Uuid     string
 	Place    placeJSON
 	Playlist playlistJSON
@@ -418,7 +422,7 @@ func (a ByOrder) Less(i, j int) bool { return a[i].Order < a[j].Order }
 
 func enrolDevice() *deviceJSON {
 	var dev deviceJSON
-	values := map[string]string{"name": cfg.LogicalName, "ip": cfg.IPAddress, "uuid": cfg.UUID}
+	values := map[string]string{"name": cfg.LogicalName, "IP": cfg.IPAddress, "uuid": cfg.UUID}
 	jsonValue, _ := json.Marshal(values)
 	resp, err := http.Post(fmt.Sprintf("%sdevices", cfg.DashboardSite), "application/json", bytes.NewBuffer(jsonValue))
 	if err != nil {
@@ -439,9 +443,9 @@ func enrolDevice() *deviceJSON {
 	return &dev
 }
 
-func getPlaylist(id int) *playlistJSON {
+func getPlaylist(ID int) *playlistJSON {
 	var dev playlistJSON
-	resp, err := http.Get(fmt.Sprintf("%splaylists/%d.json", cfg.DashboardSite, id))
+	resp, err := http.Get(fmt.Sprintf("%splaylists/%d.json", cfg.DashboardSite, ID))
 	if err != nil {
 		fmt.Println("response:", resp, " error:", err)
 		return nil
@@ -462,19 +466,65 @@ func getPlaylist(id int) *playlistJSON {
 func contactWebService() {
 	dev := enrolDevice()
 	if dev != nil {
-		cfg.internalID = dev.Id
-		play := getPlaylist(dev.Playlist.Id)
+		cfg.internalID = dev.ID
+		play := getPlaylist(dev.Playlist.ID)
 		// fmt.Println("body:", play)
 		sort.Sort(ByOrder(play.Playitems))
 		// fmt.Println("body:", play)
 		pL := make([]playItem, len(play.Playitems))
 		for i, p := range play.Playitems {
 			pL[i].Cmd = uint(p.Cmd)
-			pL[i].Param = p.Page.Url
+			pL[i].Param = p.Page.URL
 			pL[i].Value = int64(p.Value)
 		}
 		playContexte.SetNewPlayList(&pL)
 	}
+}
+
+func connect2ldap() error {
+	if os.Getenv("ad_base") == "" {
+		log.Fatal("Positionnez les variables d'environnement ad_xxx")
+	}
+	port, err := strconv.ParseUint(strings.Trim(os.Getenv("ad_port"), "\r\n"), 10, 64)
+	if err != nil {
+		log.Printf("Positionnez la variable d'environnement ad_port avec une valeur numerique %s -> %v", os.Getenv("ad_port"), err)
+		return err
+	}
+	usessl, err := strconv.ParseBool(strings.Trim(os.Getenv("ad_usessl"), "\r\n"))
+	if err != nil {
+		log.Printf("Positionnez la variable d'environnement ad_usessl avec une valeur booleenne %s -> %v", os.Getenv("ad_usessl"), err)
+		return err
+	}
+	// strings.Trim("","\r\n") pour Linux sur PIxel. Les export= ajoutent un \r en fin de ligne
+	client := &ldap.LDAPClient{
+		Base:         strings.Trim(os.Getenv("ad_base"), "\r\n"),
+		Host:         strings.Trim(os.Getenv("ad_host"), "\r\n"),
+		ServerName:   strings.Trim(os.Getenv("ad_host"), "\r\n"),
+		Port:         int(port),
+		UseSSL:       usessl,
+		BindDN:       strings.Trim(os.Getenv("ad_binddn"), "\r\n"),
+		BindPassword: strings.Trim(os.Getenv("ad_bindpwd"), "\r\n"),
+		UserFilter:   "(sAMAccountName=%s)",
+		GroupFilter:  "(memberUid=%s)",
+		Attributes:   []string{"givenName", "sn", "mail", "sAMAccountName"},
+	}
+	// It is the responsibility of the caller to close the connection
+	defer client.Close()
+
+	username := strings.Trim(os.Getenv("dashmon_user"), "\r\n")
+	password := strings.Trim(os.Getenv("dashmon_pwd"), "\r\n")
+	// fmt.Printf("using [%s]/[%s]", username, password)
+	ok, _, err := client.Authenticate(username, password)
+	if err != nil {
+		log.Printf("Error authenticating user %s: %+v", username, err)
+		return err
+	}
+	if !ok {
+		log.Printf("Authenticating failed for user %s", username)
+		return err
+	}
+	// log.Printf("User: %+v", user)
+	return nil
 }
 
 func main() {
@@ -517,6 +567,12 @@ func main() {
 
 	remoteHostname = *remoteHostnamePtr
 	remotePortnum = fmt.Sprintf("%v", *remotePortnumPtr)
+
+	if err := connect2ldap(); err != nil {
+		fmt.Println("Pas de connexion LDAP")
+	} else {
+		fmt.Println("Connexion LDAP effectuee")
+	}
 
 	server := http.Server{
 		Addr:    fmt.Sprintf(":%v", *portNumPtr),
