@@ -345,7 +345,12 @@ func getConfig(filename string, config *configuration) bool {
 	file, err := os.Open(filename)
 	if err != nil {
 		fmt.Println("error:", err)
-		config.UUID = uuid.NewV4().String()
+		if myUUID, err := uuid.NewV4(); err != nil {
+			fmt.Println("UUID error:", err)
+			config.UUID = "error"
+		} else {
+			config.UUID = myUUID.String()
+		}
 		config.LogicalName = getHostname()
 		config.HostName = getHostname()
 		config.IPAddress = getOutboundIP()
