@@ -4,6 +4,12 @@
 // > set GOARCH=arm
 // > go build dashmon
 //
+// Pour debug interne à liteIDE, j'ai modifié les paramètres Custom en changeant la valeur de la commande Debug
+// DEBUGBUILARGS
+// Before : $(LITEIDE_DEBUG_GCFLAGS) -c -o $(DEBUGTESTNAME)
+// After : -gcflags="-N -l" -a -ldflags="-linkmode=internal"
+// Mais cela ne marche pas pour autant...
+//
 package main
 
 import (
@@ -342,18 +348,18 @@ var mux map[string]func(http.ResponseWriter, *http.Request)
 var remoteHostname string
 var remotePortnum string
 var portNum string
+var verbose bool
 var cfg configuration
 
 func getConfig(filename string, config *configuration) bool {
+	if verbose {
+		fmt.Printf("Loading config [%s]\n", filename)
+	}
 	file, err := os.Open(filename)
 	if err != nil {
 		fmt.Println("error:", err)
-		if myUUID, err := uuid.NewV4(); err != nil {
-			fmt.Println("UUID error:", err)
-			config.UUID = "error"
-		} else {
-			config.UUID = myUUID.String()
-		}
+		myUUID := uuid.NewV4()
+		config.UUID = myUUID.String()
 		config.LogicalName = getHostname()
 		config.HostName = getHostname()
 		config.IPAddress = getOutboundIP()
@@ -426,15 +432,26 @@ func (a ByOrder) Less(i, j int) bool { return a[i].Order < a[j].Order }
 
 func enrolDevice() *deviceJSON {
 	var dev deviceJSON
-	values := map[string]string{"name": cfg.LogicalName, "IP": cfg.IPAddress, "uuid": cfg.UUID}
+	values := map[string]string{"name": cfg.LogicalName, "ip": cfg.IPAddress, "uuid": cfg.UUID}
 	jsonValue, _ := json.Marshal(values)
+	if verbose {
+		fmt.Printf("Post on %sdevices\n", cfg.DashboardSite)
+		fmt.Println("type application/json")
+		fmt.Printf("Data %s\n", jsonValue)
+	}
 	resp, err := http.Post(fmt.Sprintf("%sdevices", cfg.DashboardSite), "application/json", bytes.NewBuffer(jsonValue))
 	if err != nil {
 		fmt.Println("response:", resp, " error:", err)
 		return nil
 	}
 	defer resp.Body.Close()
-
+	if verbose {
+		fmt.Printf("StatusCode=%d\n", resp.StatusCode)
+	}
+	if resp.StatusCode >= 400 {
+		fmt.Printf("Error from WS(%d):%s\n", resp.StatusCode, resp.Status)
+		return nil
+	}
 	body, err := ioutil.ReadAll(resp.Body)
 	if err != nil {
 		fmt.Println("error:", err)
@@ -443,6 +460,9 @@ func enrolDevice() *deviceJSON {
 	if err := json.Unmarshal(body, &dev); err != nil {
 		fmt.Println("body:", string(body))
 		panic(err)
+	}
+	if verbose {
+		fmt.Println("EnrolDevice body:", string(body))
 	}
 	return &dev
 }
@@ -468,6 +488,9 @@ func getPlaylist(ID int) *playlistJSON {
 }
 
 func contactWebService() {
+	if verbose {
+		fmt.Println("Contacting Web Service")
+	}
 	dev := enrolDevice()
 	if dev != nil {
 		cfg.internalID = dev.ID
@@ -533,16 +556,22 @@ func connect2ldap() error {
 
 func main() {
 	playContexte = playContext{}
-	if !getConfig("properties.json", &cfg) {
-		return
-	}
 
 	portNumPtr := flag.Int("port", 8000, "Port")
 	remoteHostnamePtr := flag.String("remotehost", "localhost", "Remote host")
 	remotePortnumPtr := flag.Int("remoteport", 32000, "Remote port")
 	noAutomaticEnrolmentPtr := flag.Bool("noautomatic", false, fmt.Sprintf("No automatic enrolment on %s", cfg.DashboardSite))
+	verbosePtr := flag.Bool("verbose", false, "Verbose mode")
 
 	flag.Parse()
+
+	remoteHostname = *remoteHostnamePtr
+	remotePortnum = fmt.Sprintf("%v", *remotePortnumPtr)
+	verbose = *verbosePtr
+
+	if !getConfig("properties.json", &cfg) {
+		return
+	}
 
 	if !*noAutomaticEnrolmentPtr {
 		fmt.Printf("Enrolment on %s\n", cfg.DashboardSite)
@@ -552,8 +581,10 @@ func main() {
 		playContexte.SetNewPlayList(&cfg.PlayList)
 	}
 
-	for index, element := range playContexte.playList {
-		fmt.Println("Index(", index, ") - Cmd:", element.Cmd, " Param:", element.Param, " Value:", element.Value, ".")
+	if verbose {
+		for index, element := range playContexte.playList {
+			fmt.Println("Index(", index, ") - Cmd:", element.Cmd, " Param:", element.Param, " Value:", element.Value, ".")
+		}
 	}
 
 	// fmt.Printf("Current Item %d (%s)\n", playContexte.playItem, playContexte.GetCurrentPlayList().Param)
@@ -568,9 +599,6 @@ func main() {
 	// fmt.Printf("Current Item %d (%s)\n", playContexte.playItem, playContexte.GetNextPlayList().Param)
 
 	fmt.Printf("%s(%s):%s\n", cfg.HostName, cfg.IPAddress, cfg.UUID)
-
-	remoteHostname = *remoteHostnamePtr
-	remotePortnum = fmt.Sprintf("%v", *remotePortnumPtr)
 
 	if err := connect2ldap(); err != nil {
 		fmt.Println("Pas de connexion LDAP")
