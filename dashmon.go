@@ -358,7 +358,7 @@ func getConfig(filename string, config *configuration) bool {
 	file, err := os.Open(filename)
 	if err != nil {
 		fmt.Println("error:", err)
-		myUUID := uuid.NewV4()
+		myUUID, _ := uuid.NewV4()
 		config.UUID = myUUID.String()
 		config.LogicalName = getHostname()
 		config.HostName = getHostname()
